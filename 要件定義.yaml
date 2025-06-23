@@ -1,0 +1,1265 @@
+# メルカリ-eBay価格比較ツール 要件定義・タスクリスト
+# Version: 3.0
+# Format: YAML
+# 最終更新: 2024-12-22
+
+project:
+  name: "メルカリ-eBay価格比較ツール"
+  version: "1.0.0"
+  description: "メルカリCSVから型番を抽出し、eBay販売価格と比較して利益判定を行うツール"
+  
+# ==================================================
+# 1. 環境要件
+# ==================================================
+environment:
+  python:
+    min_version: "3.8"
+    max_version: "3.11"
+    recommended: "3.10"
+  
+  os:
+    supported:
+      - name: "Windows"
+        versions: ["10", "11"]
+      - name: "macOS"
+        min_version: "10.15"
+      - name: "Ubuntu"
+        min_version: "20.04"
+  
+  hardware:
+    memory:
+      minimum: "4GB"
+      recommended: "8GB"
+    storage:
+      minimum: "1GB"
+  
+  dependencies:
+    - name: "pandas"
+      version: "2.0.3"
+      purpose: "CSV処理"
+      critical: true
+    - name: "selenium"
+      version: "4.15.2"
+      purpose: "ブラウザ自動操作"
+      critical: true
+    - name: "webdriver-manager"
+      version: "4.0.1"
+      purpose: "ChromeDriver管理"
+      critical: true
+    - name: "requests"
+      version: "2.31.0"
+      purpose: "為替レートAPI通信"
+      critical: false
+    - name: "python-dotenv"
+      version: "1.0.0"
+      purpose: "環境変数管理"
+      critical: true
+    - name: "openpyxl"
+      version: "3.1.2"
+      purpose: "Excel出力オプション"
+      critical: false
+    - name: "chardet"
+      version: "5.2.0"
+      purpose: "文字エンコーディング自動判定"
+      critical: true
+    - name: "pyyaml"
+      version: "6.0.1"
+      purpose: "設定ファイル読み込み"
+      critical: true
+
+# ==================================================
+# 2. 設定ファイル仕様（ユーザーが簡単に変更可能）
+# ==================================================
+configuration_files:
+  
+  # メイン設定ファイル
+  main_config:
+    filename: "config.yaml"
+    location: "./config/config.yaml"
+    description: "メイン設定ファイル（ユーザーが編集）"
+    content:
+      general:
+        log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+        language: "ja"     # ja, en
+        
+      profit_calculation:
+        # 【重要】利益計算のパラメータ - ユーザーが自由に変更可能
+        markup_rate: 0.2          # 20% → 0.2 (メルカリ価格に掛ける率)
+        fixed_profit: 3000        # 固定利益額（円）
+        # 計算式: target_price = mercari_price * (1 + markup_rate) + fixed_profit
+        
+      csv:
+        default_encoding: "utf-8"
+        enable_price_cleaning: true
+        price_patterns:
+          - pattern: "([0-9,]+)円"
+          - pattern: "¥([0-9,]+)"
+          - pattern: "([0-9]+)"
+          
+      ebay:
+        search_days: 90           # 過去何日間の販売データを検索
+        wait_time:
+          min: 3                  # 最小待機時間（秒）
+          max: 5                  # 最大待機時間（秒）
+        max_retry: 3              # 最大リトライ回数
+        
+      exchange_rate:
+        method: "fixed"           # api, fixed, historical
+        fixed_rate: 150.0         # 固定為替レート（1USD = 150JPY）
+        api:
+          provider: "exchangerate-api"
+          api_key: ""             # APIキー（環境変数推奨）
+          
+      output:
+        format: "csv"             # csv, excel, both
+        add_timestamp: true       # ファイル名にタイムスタンプ追加
+        backup_original: true     # 元ファイルをバックアップ
+  
+  # 型番パターン設定
+  model_patterns_config:
+    filename: "model_patterns.yaml"
+    location: "./config/model_patterns.yaml"
+    description: "型番抽出パターン（カスタマイズ可能）"
+    content:
+      patterns:
+        - name: "腕時計型番"
+          pattern: "[A-Z]{2,4}[-]?[0-9]{3,6}"
+          priority: 1
+          examples: ["SBGX261", "GMT-5600"]
+          
+        - name: "家電型番"
+          pattern: "[A-Z]{2,3}-[A-Z0-9]{2,}-[A-Z0-9]+"
+          priority: 2
+          examples: ["KJ-55X9500H", "RP-HD10"]
+          
+        - name: "汎用型番1"
+          pattern: "[0-9]{4}-[0-9]{4}"
+          priority: 3
+          examples: ["4843-8041", "1234-5678"]
+          
+        - name: "汎用型番2"
+          pattern: "[A-Z][0-9]{2,}[A-Z]?[0-9]*"
+          priority: 4
+          examples: ["A1234B5", "X999"]
+          
+        # ユーザーがカスタムパターンを追加可能
+        - name: "カスタム1"
+          pattern: ""
+          priority: 5
+          enabled: false
+  
+  # エラーメッセージ設定
+  messages_config:
+    filename: "messages_ja.yaml"
+    location: "./config/messages_ja.yaml"
+    description: "日本語メッセージ定義"
+    content:
+      errors:
+        file_not_found: |
+          指定されたファイル '{filepath}' が見つかりません。
+          パスが正しいか確認してください。
+          ヒント: ファイルをこのウィンドウにドラッグ&ドロップすることもできます。
+          
+        ebay_session_expired: |
+          eBayのセッションが切れています。
+          1. Chromeブラウザを開く
+          2. eBayにログインする
+          3. このツールを再実行する
+          の手順でお試しください。
+          
+        rate_limit: |
+          eBayからアクセス制限を受けました。
+          {wait_time}秒間待機します... (残り時間: {remaining}秒)
+
+# ==================================================
+# 3. 機能要件
+# ==================================================
+functional_requirements:
+  
+  input:
+    file_format:
+      type: "CSV"
+      encodings:
+        - priority: 1
+          encoding: "UTF-8"
+          bom_support: true
+        - priority: 2
+          encoding: "Shift_JIS"
+        - priority: 3
+          encoding: "CP932"
+      auto_detection: true
+      
+    csv_structure:
+      columns:
+        - index: "A"
+          name: "title"
+          type: "string"
+          required: true
+          max_length: 500
+          validation:
+            - rule: "not_empty"
+              error_action: "skip_row"
+              
+        - index: "B"
+          name: "image_url"
+          type: "url"
+          required: false
+          validation:
+            - rule: "valid_url"
+              pattern: "^https?://"
+              error_action: "log_warning"
+              
+        - index: "C"
+          name: "price"
+          type: "numeric"
+          required: true
+          validation:
+            - rule: "positive_number"
+              min: 0
+              error_action: "set_zero"
+              
+        - index: "D"
+          name: "product_url"
+          type: "url"
+          required: true
+          validation:
+            - rule: "mercari_domain"
+              pattern: "mercari.com"
+              error_action: "log_warning"
+    
+    file_specification:
+      methods:
+        - type: "command_line"
+          format: "python tool.py --input /path/to/file.csv"
+          priority: 1
+          
+        - type: "interactive"
+          prompt: "CSVファイルのパスを入力してください: "
+          priority: 2
+          
+        - type: "drag_drop"
+          platforms: ["windows"]
+          priority: 3
+  
+  processing:
+    model_extraction:
+      strategy: "first_match"  # first_match, best_match, all_matches
+      fallback:
+        enabled: true
+        method: "use_full_title"
+      normalization:
+        uppercase: true
+        remove_symbols: true
+        
+    ebay_search:
+      url: "https://www.ebay.com/sh/research"
+      parameters:
+        marketplace: "EBAY-US"
+        tabName: "SOLD"
+        dateRange: "Last90Days"  # 設定ファイルから変更可能
+        condition: "all"
+        sortBy: "EndDateRecent"
+        
+      session_management:
+        use_existing_profile: true
+        session_check: true
+        auto_relogin: false
+        
+      access_control:
+        wait_time:
+          base: [3, 5]  # 3-5秒のランダム
+          exponential_backoff: true
+          max_wait: 60
+        rate_limit_detection: true
+        user_agent: "real_chrome"
+        
+    price_comparison:
+      formula:
+        # 設定ファイルから読み込まれる値を使用
+        # target_price_jpy = mercari_price * (1 + markup_rate) + fixed_profit
+        use_config_values: true
+        
+      exchange_rate:
+        sources:
+          - type: "api"
+            priority: 1
+            cache_duration: 3600  # 1時間キャッシュ
+            
+          - type: "fixed"
+            priority: 2
+            value_from_config: true
+            
+          - type: "historical"
+            priority: 3
+            provider: "yahoo_finance"
+  
+  output:
+    file_naming:
+      pattern: "{original_name}_result_{timestamp}.csv"
+      timestamp_format: "YYYYMMDD_HHMMSS"
+      
+    columns:
+      # 元のデータ（A-D列）はそのままコピー
+      - source: "original"
+        columns: ["A", "B", "C", "D"]
+        
+      # 追加列
+      - column: "E"
+        name: "ebay_status"
+        values: ["該当あり", "該当なし", "エラー"]
+        
+      - column: "F"
+        name: "ebay_item_count"
+        type: "integer"
+        
+      - column: "G"
+        name: "ebay_best_item"
+        type: "string"
+        
+      - column: "H"
+        name: "ebay_best_url"
+        type: "url"
+        
+      - column: "I"
+        name: "ebay_best_price_usd"
+        type: "decimal"
+        format: "0.00"
+        
+      - column: "J"
+        name: "ebay_best_price_jpy"
+        type: "integer"
+        
+      - column: "K"
+        name: "profit_amount"
+        type: "integer"
+        calculation: "ebay_best_price_jpy - (mercari_price * (1 + markup_rate) + fixed_profit)"
+        
+      - column: "L"
+        name: "profit_rate"
+        type: "decimal"
+        format: "0.0%"
+        calculation: "profit_amount / mercari_price"
+        
+      - column: "M"
+        name: "exchange_rate"
+        type: "decimal"
+        format: "0.00"
+        
+      - column: "N"
+        name: "search_date"
+        type: "datetime"
+        format: "ISO8601"
+        
+      - column: "O"
+        name: "error_message"
+        type: "string"
+        condition: "only_on_error"
+    
+    additional_outputs:
+      - type: "log"
+        path: "./logs/"
+        files:
+          - name: "main.log"
+            content: "all_logs"
+          - name: "error.log"
+            content: "errors_only"
+          - name: "skipped_items.csv"
+            content: "skipped_rows"
+          - name: "performance.json"
+            content: "statistics"
+
+# ==================================================
+# 4. 非機能要件
+# ==================================================
+non_functional_requirements:
+  performance:
+    processing_time:
+      per_item: "5-10 seconds"
+      batch_100: "8-17 minutes"
+    memory_usage:
+      max: "500MB"
+    concurrency:
+      supported: false
+      reason: "eBayアクセス制限対策"
+      
+  reliability:
+    error_handling:
+      retry_count: 3
+      partial_failure_allowed: true
+      checkpoint_interval: 10  # 10件ごとに保存
+      
+    recovery:
+      resume_from_checkpoint: true
+      corrupted_data_handling: "skip_and_log"
+      
+  security:
+    api_keys:
+      storage: "environment_variables"
+      encryption: true
+      
+    logging:
+      pii_masking: true
+      retention_days: 90
+      auto_cleanup: true
+      
+  maintainability:
+    config_validation: true
+    self_diagnostic: true
+    update_check: false
+
+# ==================================================
+# 5. エラーハンドリング詳細
+# ==================================================
+error_handling:
+  categories:
+    - type: "fatal"
+      examples:
+        - "ファイル不在"
+        - "Python環境異常"
+        - "必須ライブラリ未インストール"
+      action: "immediate_exit"
+      notification: "red_console_text"
+      
+    - type: "recoverable"
+      examples:
+        - "ネットワーク一時障害"
+        - "eBayページ読み込みタイムアウト"
+      action: "retry_with_backoff"
+      notification: "yellow_warning"
+      
+    - type: "data_error"
+      examples:
+        - "型番抽出失敗"
+        - "価格形式異常"
+        - "必須列欠損"
+      action: "skip_and_continue"
+      notification: "log_only"
+      
+    - type: "external_service"
+      examples:
+        - "eBayアクセス拒否"
+        - "為替API制限"
+      action: "wait_and_retry"
+      notification: "progress_bar"
+
+# ==================================================
+# 6. プロジェクト構造
+# ==================================================
+project_structure:
+  root_directory: "mercari_ebay_tool"
+  structure:
+    - path: "/"
+      files:
+        - "main.py"           # メインエントリーポイント
+        - "requirements.txt"  # 依存関係
+        - "setup.py"         # インストーラー
+        - "README.md"        # プロジェクト説明
+        - ".gitignore"       # Git除外設定
+        
+    - path: "/config/"
+      description: "設定ファイル（ユーザー編集可）"
+      files:
+        - "config.yaml"      # メイン設定
+        - "model_patterns.yaml"  # 型番パターン
+        - "messages_ja.yaml"     # 日本語メッセージ
+        - "messages_en.yaml"     # 英語メッセージ
+        
+    - path: "/src/"
+      description: "ソースコード"
+      modules:
+        - name: "file_handler.py"
+          description: "ファイルI/O処理"
+          classes: ["FileHandler", "CSVReader", "CSVWriter"]
+          
+        - name: "model_extractor.py"
+          description: "型番抽出処理"
+          classes: ["ModelExtractor", "PatternMatcher"]
+          
+        - name: "price_processor.py"
+          description: "価格計算・為替処理"
+          classes: ["PriceCalculator", "ExchangeRateManager"]
+          
+        - name: "ebay_scraper.py"
+          description: "eBayスクレイピング"
+          classes: ["EbayScraper", "SearchResultParser"]
+          
+        - name: "browser_controller.py"
+          description: "ブラウザ制御"
+          classes: ["BrowserController", "SessionManager"]
+          
+        - name: "output_handler.py"
+          description: "出力処理"
+          classes: ["OutputHandler", "ReportGenerator"]
+          
+        - name: "error_handler.py"
+          description: "エラー処理"
+          classes: ["ErrorHandler", "RetryManager"]
+          
+        - name: "config_loader.py"
+          description: "設定読み込み"
+          classes: ["ConfigLoader", "ConfigValidator"]
+          
+    - path: "/tests/"
+      description: "テストコード"
+      structure:
+        - "unit/"            # 単体テスト
+        - "integration/"     # 統合テスト
+        - "fixtures/"        # テストデータ
+        
+    - path: "/logs/"
+      description: "ログファイル（自動生成）"
+      
+    - path: "/output/"
+      description: "出力ファイル（自動生成）"
+      
+    - path: "/docs/"
+      description: "ドキュメント"
+      files:
+        - "user_manual.md"   # 操作マニュアル
+        - "troubleshooting.md"  # トラブルシューティング
+        - "api_reference.md"    # API仕様書
+
+# ==================================================
+# 7. 詳細タスクリスト
+# ==================================================
+tasks:
+  
+  # フェーズ1: 環境構築とプロジェクト初期化
+  phase_1:
+    name: "環境構築とプロジェクト初期化"
+    estimated_hours: 2
+    tasks:
+      - id: "1.1"
+        name: "Python環境確認"
+        description: "Python 3.8-3.11の範囲内であることを確認"
+        subtasks:
+          - "python --versionでバージョン確認"
+          - "複数バージョンがある場合は適切なものを選択"
+        concerns:
+          - "3.12以降は一部ライブラリ未対応の可能性"
+        completion_criteria: "適切なPythonバージョンが利用可能"
+        
+      - id: "1.2"
+        name: "仮想環境作成"
+        description: "プロジェクト専用の仮想環境を作成"
+        commands:
+          - "python -m venv venv"
+          - "source venv/bin/activate  # Linux/Mac"
+          - "venv\\Scripts\\activate  # Windows"
+        concerns:
+          - "グローバル環境の汚染防止"
+        completion_criteria: "仮想環境が有効化される"
+        
+      - id: "1.3"
+        name: "依存関係インストール"
+        description: "requirements.txtから全ライブラリをインストール"
+        subtasks:
+          - "requirements.txt作成（バージョン固定）"
+          - "pip install -r requirements.txt実行"
+          - "インストール確認（pip list）"
+        concerns:
+          - "バージョン競合の可能性"
+          - "プラットフォーム依存の問題"
+        completion_criteria: "全ライブラリが正常にインストール"
+        
+      - id: "1.4"
+        name: "プロジェクト構造作成"
+        description: "ディレクトリ構造を作成"
+        subtasks:
+          - "src/, config/, tests/, logs/, output/, docs/作成"
+          - "__init__.pyファイル配置"
+          - ".gitignore設定"
+        concerns:
+          - "将来の拡張性を考慮した構造"
+        completion_criteria: "全ディレクトリが作成される"
+        
+      - id: "1.5"
+        name: "設定ファイル初期化"
+        description: "YAML設定ファイルを作成"
+        subtasks:
+          - "config.yaml作成（利益計算パラメータ含む）"
+          - "model_patterns.yaml作成"
+          - "messages_ja.yaml作成"
+          - "設定ファイルの検証スクリプト作成"
+        concerns:
+          - "YAMLシンタックスエラー"
+          - "デフォルト値の妥当性"
+        completion_criteria: "設定ファイルが読み込み可能"
+  
+  # フェーズ2: 基本モジュール開発
+  phase_2:
+    name: "基本モジュール開発"
+    estimated_hours: 8
+    modules:
+      
+      # 設定読み込みモジュール（最優先）
+      - module: "config_loader"
+        estimated_hours: 2
+        tasks:
+          - id: "2.1.1"
+            name: "ConfigLoaderクラス設計"
+            description: "YAML設定ファイルを読み込むクラス"
+            implementation:
+              - "pyyamlを使用したYAML読み込み"
+              - "設定値の型チェック"
+              - "必須項目の検証"
+              - "利益計算パラメータの読み込み"
+            concerns:
+              - "設定ファイルが存在しない場合"
+              - "不正な値が設定された場合"
+              
+          - id: "2.1.2"
+            name: "設定値バリデーション"
+            description: "設定値の妥当性をチェック"
+            validations:
+              - "markup_rate: 0.0-10.0の範囲"
+              - "fixed_profit: 0以上の整数"
+              - "exchange_rate: 1.0以上"
+              - "wait_time: 1秒以上"
+            error_handling: "詳細なエラーメッセージ表示"
+            
+          - id: "2.1.3"
+            name: "動的設定リロード"
+            description: "実行中の設定変更対応"
+            features:
+              - "設定ファイル変更監視"
+              - "安全な再読み込み"
+              - "変更通知機能"
+      
+      # ファイルI/Oモジュール
+      - module: "file_handler"
+        estimated_hours: 2
+        tasks:
+          - id: "2.2.1"
+            name: "FileHandlerクラス実装"
+            description: "ファイル入出力の基本クラス"
+            features:
+              - "エンコーディング自動判定（chardet）"
+              - "大容量ファイル対応（チャンク読み込み）"
+              - "バックアップ自動作成"
+              
+          - id: "2.2.2"
+            name: "CSVReaderクラス実装"
+            description: "CSV読み込み専用クラス"
+            features:
+              - "pandas.read_csvのラッパー"
+              - "列名の正規化"
+              - "データ型の自動判定"
+              - "エラー行のスキップとログ"
+              
+          - id: "2.2.3"
+            name: "価格データクレンジング"
+            description: "price列のデータ整形"
+            patterns:
+              - "カンマ除去: 1,000 → 1000"
+              - "通貨記号除去: ¥1000 → 1000"
+              - "全角→半角変換"
+              - "文字列除去: 約1000円 → 1000"
+      
+      # 型番抽出モジュール
+      - module: "model_extractor"
+        estimated_hours: 2
+        tasks:
+          - id: "2.3.1"
+            name: "PatternMatcherクラス実装"
+            description: "正規表現パターンマッチング"
+            features:
+              - "設定ファイルからパターン読み込み"
+              - "優先順位に基づくマッチング"
+              - "複数マッチ時の処理"
+              
+          - id: "2.3.2"
+            name: "ModelExtractorクラス実装"
+            description: "型番抽出のメインクラス"
+            features:
+              - "タイトルからの型番抽出"
+              - "抽出結果の正規化"
+              - "信頼度スコア計算"
+              - "抽出失敗時のフォールバック"
+              
+          - id: "2.3.3"
+            name: "カスタムパターン対応"
+            description: "ユーザー定義パターンのサポート"
+            features:
+              - "正規表現の妥当性検証"
+              - "テストモード実装"
+              - "パターンの動的追加"
+      
+      # 価格処理モジュール
+      - module: "price_processor"
+        estimated_hours: 2
+        tasks:
+          - id: "2.4.1"
+            name: "PriceCalculatorクラス実装"
+            description: "利益計算ロジック"
+            features:
+              - "設定ファイルからパラメータ読み込み"
+              - "動的な計算式: mercari * (1 + markup_rate) + fixed_profit"
+              - "小数点処理（Decimal使用）"
+              
+          - id: "2.4.2"
+            name: "ExchangeRateManagerクラス実装"
+            description: "為替レート管理"
+            features:
+              - "複数ソース対応（API/固定/履歴）"
+              - "キャッシュ機能"
+              - "エラー時のフォールバック"
+              - "レート変動アラート"
+  
+  # フェーズ3: eBayスクレイピングモジュール開発
+  phase_3:
+    name: "eBayスクレイピングモジュール開発"
+    estimated_hours: 12
+    modules:
+      
+      # ブラウザ制御基盤
+      - module: "browser_controller"
+        estimated_hours: 4
+        tasks:
+          - id: "3.1.1"
+            name: "BrowserControllerクラス設計"
+            description: "Seleniumブラウザ制御の基底クラス"
+            features:
+              - "Chrome既存プロファイル利用"
+              - "ヘッドレスモード対応"
+              - "プロキシ設定対応"
+              
+          - id: "3.1.2"
+            name: "アンチ検出対策実装"
+            description: "ボット検出回避機能"
+            techniques:
+              - "User-Agent偽装"
+              - "WebDriver属性隠蔽"
+              - "Canvas Fingerprint対策"
+              - "マウス動作シミュレーション"
+              
+          - id: "3.1.3"
+            name: "SessionManagerクラス実装"
+            description: "セッション管理機能"
+            features:
+              - "ログイン状態確認"
+              - "Cookie保存/復元"
+              - "セッションタイムアウト検出"
+              - "自動再ログイン（オプション）"
+      
+      # eBay操作モジュール
+      - module: "ebay_scraper"
+        estimated_hours: 6
+        tasks:
+          - id: "3.2.1"
+            name: "EbayScraperクラス実装"
+            description: "eBay検索・データ取得"
+            features:
+              - "Research URL動的生成"
+              - "検索条件の柔軟な設定"
+              - "ページネーション対応"
+              
+          - id: "3.2.2"
+            name: "要素抽出ロジック"
+            description: "DOM要素からデータ抽出"
+            targets:
+              - element: "商品名"
+                selectors:
+                  - "CSS: .item-title"
+                  - "XPath: //h3[@class='title']"
+                fallback: true
+                
+              - element: "価格"
+                selectors:
+                  - "CSS: .item-price"
+                  - "XPath: //span[contains(@class,'price')]"
+                processing: "通貨記号除去、数値変換"
+                
+              - element: "URL"
+                selectors:
+                  - "CSS: a.item-link"
+                processing: "相対→絶対URL変換"
+                
+          - id: "3.2.3"
+            name: "アクセス制御実装"
+            description: "レート制限対策"
+            features:
+              - "動的待機時間（設定ファイルから）"
+              - "429エラー検出と対処"
+              - "リトライロジック"
+              - "アクセスログ記録"
+      
+      # エラーリカバリ
+      - module: "error_recovery"
+        estimated_hours: 2
+        tasks:
+          - id: "3.3.1"
+            name: "例外処理フレームワーク"
+            description: "統一的なエラーハンドリング"
+            exception_types:
+              - "NetworkException"
+              - "SessionExpiredException"
+              - "RateLimitException"
+              - "ParseException"
+              
+          - id: "3.3.2"
+            name: "リトライマネージャー実装"
+            description: "賢いリトライ戦略"
+            strategies:
+              - "指数バックオフ"
+              - "ジッター追加"
+              - "最大リトライ回数制御"
+              - "エラー種別ごとの戦略"
+  
+  # フェーズ4: 統合処理とメインロジック
+  phase_4:
+    name: "統合処理とメインロジック"
+    estimated_hours: 6
+    modules:
+      
+      # メイン処理フロー
+      - module: "main"
+        estimated_hours: 3
+        tasks:
+          - id: "4.1.1"
+            name: "コマンドライン引数処理"
+            description: "argparseによる引数処理"
+            arguments:
+              - name: "--input"
+                type: "str"
+                required: true
+                help: "入力CSVファイルパス"
+                
+              - name: "--config"
+                type: "str"
+                default: "./config/config.yaml"
+                help: "設定ファイルパス"
+                
+              - name: "--markup-rate"
+                type: "float"
+                help: "マークアップ率（設定ファイルを上書き）"
+                
+              - name: "--fixed-profit"
+                type: "int"
+                help: "固定利益額（設定ファイルを上書き）"
+                
+              - name: "--exchange-rate"
+                type: "float"
+                help: "為替レート（設定ファイルを上書き）"
+                
+              - name: "--dry-run"
+                action: "store_true"
+                help: "実行シミュレーション"
+                
+          - id: "4.1.2"
+            name: "メイン処理フロー実装"
+            description: "全体の処理統合"
+            flow:
+              - step: "初期化"
+                actions:
+                  - "設定ファイル読み込み"
+                  - "コマンドライン引数で上書き"
+                  - "ログ設定"
+                  
+              - step: "入力処理"
+                actions:
+                  - "CSVファイル読み込み"
+                  - "データ検証"
+                  - "処理対象リスト作成"
+                  
+              - step: "メインループ"
+                actions:
+                  - "進捗表示（tqdm）"
+                  - "型番抽出"
+                  - "eBay検索"
+                  - "価格比較"
+                  - "結果記録"
+                  - "チェックポイント保存"
+                  
+              - step: "終了処理"
+                actions:
+                  - "結果ファイル出力"
+                  - "統計情報表示"
+                  - "ログファイル整理"
+                  
+          - id: "4.1.3"
+            name: "進捗管理実装"
+            description: "ユーザーフレンドリーな進捗表示"
+            features:
+              - "プログレスバー（tqdm）"
+              - "推定残り時間表示"
+              - "処理済み/エラー/スキップ件数表示"
+              - "現在処理中の商品名表示"
+      
+      # 出力処理モジュール
+      - module: "output_handler"
+        estimated_hours: 2
+        tasks:
+          - id: "4.2.1"
+            name: "OutputHandlerクラス実装"
+            description: "結果出力の統合管理"
+            features:
+              - "CSV/Excel形式対応"
+              - "タイムスタンプ付きファイル名"
+              - "元ファイルバックアップ"
+              
+          - id: "4.2.2"
+            name: "結果データ整形"
+            description: "出力用データの整形"
+            processing:
+              - "利益計算（設定値使用）"
+              - "利益率計算"
+              - "日付フォーマット"
+              - "エラーメッセージ整形"
+              
+          - id: "4.2.3"
+            name: "レポート生成機能"
+            description: "処理結果サマリー作成"
+            contents:
+              - "処理件数統計"
+              - "利益商品リスト"
+              - "エラー一覧"
+              - "処理時間分析"
+              - "使用した設定値（利益計算パラメータ等）"
+      
+      # 中断・再開機能
+      - module: "checkpoint_manager"
+        estimated_hours: 1
+        tasks:
+          - id: "4.3.1"
+            name: "チェックポイント保存"
+            description: "処理状態の定期保存"
+            features:
+              - "10件ごとに自動保存"
+              - "処理済みリスト記録"
+              - "部分的な結果保存"
+              
+          - id: "4.3.2"
+            name: "再開機能実装"
+            description: "中断からの処理再開"
+            features:
+              - "チェックポイント検出"
+              - "未処理分の特定"
+              - "結果ファイルマージ"
+  
+  # フェーズ5: エラーハンドリングとログ
+  phase_5:
+    name: "エラーハンドリングとログ"
+    estimated_hours: 4
+    tasks:
+      - id: "5.1"
+        name: "ログシステム設計"
+        description: "統一的なログ出力"
+        implementation:
+          - "Pythonロギングモジュール使用"
+          - "ログレベル設定（設定ファイルから）"
+          - "ローテーション設定"
+          - "フォーマット統一"
+        log_types:
+          - type: "main.log"
+            content: "全ての処理ログ"
+            format: "[%(asctime)s] %(levelname)s - %(message)s"
+            
+          - type: "error.log"
+            content: "エラーのみ"
+            format: "[%(asctime)s] %(levelname)s - %(filename)s:%(lineno)d - %(message)s"
+            
+          - type: "performance.log"
+            content: "パフォーマンス統計"
+            format: "JSON形式"
+            
+      - id: "5.2"
+        name: "カスタム例外クラス"
+        description: "ビジネスロジック例外定義"
+        exceptions:
+          - name: "ConfigurationError"
+            usage: "設定ファイルエラー"
+            attributes: ["config_file", "parameter", "value"]
+            
+          - name: "ModelExtractionError"
+            usage: "型番抽出失敗"
+            attributes: ["title", "patterns_tried"]
+            
+          - name: "EbayAccessError"
+            usage: "eBayアクセスエラー"
+            attributes: ["url", "status_code", "retry_count"]
+            
+          - name: "PriceCalculationError"
+            usage: "価格計算エラー"
+            attributes: ["mercari_price", "exchange_rate"]
+            
+      - id: "5.3"
+        name: "エラー通知システム"
+        description: "重要エラーの通知"
+        methods:
+          - "コンソール出力（色付き）"
+          - "デスクトップ通知（オプション）"
+          - "サマリーレポート"
+          
+      - id: "5.4"
+        name: "デバッグ支援機能"
+        description: "トラブルシューティング支援"
+        features:
+          - "詳細デバッグモード"
+          - "スクリーンショット保存"
+          - "HTMLダンプ機能"
+          - "ネットワークログ"
+  
+  # フェーズ6: テストとデバッグ
+  phase_6:
+    name: "テストとデバッグ"
+    estimated_hours: 8
+    test_categories:
+      
+      # 単体テスト
+      - category: "unit_tests"
+        estimated_hours: 3
+        test_modules:
+          - module: "test_config_loader"
+            tests:
+              - "設定ファイル読み込み成功"
+              - "不正なYAMLでエラー"
+              - "必須パラメータ欠落検出"
+              - "利益計算パラメータ検証"
+              
+          - module: "test_model_extractor"
+            tests:
+              - "各パターンでの抽出成功"
+              - "複数型番の優先順位"
+              - "抽出失敗時のフォールバック"
+              - "カスタムパターン動作"
+              
+          - module: "test_price_processor"
+            tests:
+              - "価格クレンジング全パターン"
+              - "利益計算（各種パラメータ）"
+              - "為替レート変換"
+              - "エッジケース（0円、マイナス）"
+              
+      # 統合テスト
+      - category: "integration_tests"
+        estimated_hours: 3
+        scenarios:
+          - name: "正常系フロー"
+            description: "10件の正常データで完走"
+            validations:
+              - "全商品の処理完了"
+              - "結果ファイル生成"
+              - "正しい利益計算"
+              
+          - name: "設定変更テスト"
+            description: "利益計算パラメータ変更"
+            test_cases:
+              - "markup_rate: 0.1 (10%)"
+              - "markup_rate: 0.5 (50%)"
+              - "fixed_profit: 5000"
+              - "exchange_rate: 140"
+              
+          - name: "エラー混在テスト"
+            description: "正常/異常データ混在"
+            validations:
+              - "エラー商品のスキップ"
+              - "正常商品の処理継続"
+              - "エラーログ出力"
+              
+          - name: "大量データテスト"
+            description: "1000件処理"
+            validations:
+              - "メモリ使用量監視"
+              - "処理時間測定"
+              - "チェックポイント動作"
+              
+      # システムテスト
+      - category: "system_tests"
+        estimated_hours: 2
+        test_cases:
+          - name: "eBayセッション切れ"
+            description: "セッション切れ状態での動作"
+            expected: "適切なエラーメッセージ"
+            
+          - name: "ネットワーク切断"
+            description: "処理中のネットワーク切断"
+            expected: "リトライ後エラー終了"
+            
+          - name: "ファイルアクセス権限"
+            description: "書き込み権限なし"
+            expected: "権限エラー通知"
+            
+          - name: "設定ファイル動的変更"
+            description: "実行中の設定変更"
+            expected: "変更は次回実行時に反映"
+  
+  # フェーズ7: ドキュメントと納品準備
+  phase_7:
+    name: "ドキュメントと納品準備"
+    estimated_hours: 4
+    deliverables:
+      
+      - name: "ユーザーマニュアル"
+        format: "Markdown"
+        contents:
+          - section: "はじめに"
+            items:
+              - "ツールの概要"
+              - "動作環境"
+              - "必要な準備"
+              
+          - section: "インストール手順"
+            items:
+              - "Pythonインストール"
+              - "ツールのセットアップ"
+              - "Chrome設定"
+              - "eBayログイン"
+              
+          - section: "設定ファイルの編集"
+            items:
+              - "利益計算パラメータの変更方法"
+              - "為替レート設定"
+              - "待機時間調整"
+              - "型番パターン追加"
+            code_examples: true
+            
+          - section: "使い方"
+            items:
+              - "基本的な実行方法"
+              - "コマンドラインオプション"
+              - "設定の動的上書き"
+            screenshots: true
+            
+          - section: "出力ファイルの見方"
+            items:
+              - "各列の説明"
+              - "利益計算の詳細"
+              - "エラーメッセージの意味"
+              
+      - name: "トラブルシューティングガイド"
+        format: "Markdown"
+        qa_items:
+          - q: "eBayにアクセスできません"
+            a: |
+              1. Chromeでebay.comにアクセス
+              2. ログイン状態を確認
+              3. ツールを再実行
+              
+          - q: "型番が抽出されません"
+            a: |
+              1. config/model_patterns.yamlを編集
+              2. カスタムパターンを追加
+              3. patternに正規表現を記述
+              
+          - q: "利益計算がおかしい"
+            a: |
+              1. config/config.yamlを確認
+              2. markup_rateとfixed_profitを確認
+              3. 為替レート設定を確認
+              
+      - name: "開発者向けドキュメント"
+        format: "Markdown + Sphinx"
+        contents:
+          - "アーキテクチャ概要"
+          - "クラス図"
+          - "API仕様"
+          - "拡張方法"
+          
+      - name: "配布パッケージ"
+        components:
+          - "実行ファイル（PyInstaller）"
+          - "設定ファイルテンプレート"
+          - "サンプルCSV"
+          - "マニュアル一式"
+          - "README.txt"
+
+# ==================================================
+# 8. リスク管理
+# ==================================================
+risk_management:
+  technical_risks:
+    - risk: "eBay仕様変更"
+      probability: "高"
+      impact: "高"
+      mitigation:
+        - "複数のセレクタを準備"
+        - "定期的な動作確認"
+        - "エラー時の詳細ログ"
+        - "HTMLダンプ機能"
+      
+    - risk: "アクセス制限"
+      probability: "中"
+      impact: "高"
+      mitigation:
+        - "設定可能な待機時間"
+        - "User-Agent偽装"
+        - "プロキシ対応準備"
+        
+    - risk: "設定ミス"
+      probability: "高"
+      impact: "中"
+      mitigation:
+        - "設定値検証"
+        - "わかりやすいエラーメッセージ"
+        - "デフォルト値の提供"
+        - "設定例の充実"
+        
+  operational_risks:
+    - risk: "大量データでのメモリ不足"
+      probability: "低"
+      impact: "中"
+      mitigation:
+        - "チャンク処理"
+        - "定期的なガベージコレクション"
+        - "メモリ使用量監視"
+        
+    - risk: "処理中断によるデータ不整合"
+      probability: "中"
+      impact: "低"  
+      mitigation:
+        - "チェックポイント機能"
+        - "トランザクション的な処理"
+        - "再開機能"
+
+# ==================================================
+# 9. 成功基準
+# ==================================================
+success_criteria:
+  functional:
+    - "CSVファイルを正常に読み込める"
+    - "型番を80%以上の精度で抽出できる"
+    - "eBay検索が安定して動作する"
+    - "利益計算が正確に行われる"
+    - "設定変更が簡単にできる"
+    
+  non_functional:
+    - "100件を20分以内で処理できる"
+    - "エラー時も処理が継続される"
+    - "わかりやすいエラーメッセージ"
+    - "設定ファイルの編集が容易"
+    
+  user_experience:
+    - "インストールが簡単"
+    - "設定変更が直感的"
+    - "進捗がリアルタイムでわかる"
+    - "結果が見やすい"
+
+# ==================================================
+# 10. 保守・運用
+# ==================================================
+maintenance:
+  regular_tasks:
+    - task: "eBay仕様確認"
+      frequency: "月次"
+      description: "DOM構造の変更確認"
+      
+    - task: "パフォーマンス分析"
+      frequency: "週次"
+      description: "処理時間の統計分析"
+      
+    - task: "エラーログ分析"
+      frequency: "日次"
+      description: "頻発エラーの特定"
+      
+  update_plan:
+    - version: "1.1"
+      features:
+        - "並列処理対応"
+        - "他ECサイト対応"
+        
+    - version: "1.2"
+      features:
+        - "GUI版リリース"
+        - "クラウド版検討"
+        

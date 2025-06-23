@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(touch:*)",
+      "Bash(pip install:*)",
+      "Bash(rg:*)",
+      "Bash(true)"
+    ],
+    "deny": []
+  }
+}
