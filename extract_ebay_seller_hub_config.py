@@ -55,6 +55,15 @@ def load_config():
         print(f"💰 固定利益: ¥{fixed_profit:,}")
         print(f"💱 為替レート: 1USD = ¥{exchange_rate}")
         
+        # 金額フィルター設定の表示
+        price_filter = config.get('ebay', {}).get('price_filter', {})
+        if price_filter.get('enable_price_filter', False):
+            min_price = price_filter.get('min_price', 0)
+            max_price = price_filter.get('max_price', 0)
+            print(f"💰 金額フィルター: ${min_price} - ${max_price} (有効)")
+        else:
+            print(f"💰 金額フィルター: 無効")
+        
         return config
         
     except Exception as e:
@@ -158,7 +167,7 @@ def wait_for_manual_login(driver):
     input("ログイン完了後、Enterキーを押してください...")
     
     # ログイン後のページ読み込み待機
-    time.sleep(3)
+    time.sleep(2)  # 3秒から2秒に短縮
 
 def search_model_number(driver, model_number):
     """
@@ -192,17 +201,15 @@ def search_model_number(driver, model_number):
         
         # 検索窓を完全にクリアして型番を入力
         search_input.clear()
-        time.sleep(0.5)  # クリア処理の完了を待機
+        time.sleep(0.2)  # クリア処理の完了を待機（0.5→0.2秒に短縮）
         
         # Ctrl+A → Delete で確実にクリア
         search_input.send_keys(Keys.CONTROL + "a")
-        time.sleep(0.2)
         search_input.send_keys(Keys.DELETE)
-        time.sleep(0.2)
         
         # 型番を入力
         search_input.send_keys(model_number)
-        time.sleep(1)
+        time.sleep(0.3)  # 1秒から0.3秒に短縮
         
         # 入力内容を確認（デバッグ用）
         current_value = search_input.get_attribute('value')
@@ -212,14 +219,402 @@ def search_model_number(driver, model_number):
         search_input.send_keys(Keys.RETURN)
         print(f"🔍 検索実行: {model_number}")
         
-        # 検索結果の読み込み待機（延長）
+        # 検索結果の読み込みを動的に待機
         print("⏳ 検索結果の読み込み待機中...")
-        time.sleep(8)  # 5秒から8秒に延長
+        try:
+            # テーブル行が表示されるまで最大5秒待機
+            WebDriverWait(driver, 5).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "tr.research-table-row"))
+            )
+            time.sleep(1)  # 追加の読み込み時間を短縮
+        except TimeoutException:
+            # テーブルが見つからない場合も続行
+            time.sleep(2)
         
         return True
         
     except Exception as e:
         print(f"❌ 検索エラー: {e}")
+        return False
+
+def apply_price_filter_if_enabled(driver, config):
+    """
+    設定に基づいて価格フィルターを適用（有効な場合のみ）
+    """
+    # 価格フィルターが有効かチェック
+    price_filter_enabled = config.get('ebay', {}).get('price_filter', {}).get('enable_price_filter', False)
+    
+    if not price_filter_enabled:
+        print("📊 価格フィルターは無効です（config.yamlで設定）")
+        return True
+    
+    min_price = config.get('ebay', {}).get('price_filter', {}).get('min_price', 0)
+    max_price = config.get('ebay', {}).get('price_filter', {}).get('max_price', 999999)
+    
+    print(f"💰 金額フィルターを適用中: ${min_price} - ${max_price}")
+    
+    try:
+        # まず最初にSoldタブをクリック（フィルター適用前に）
+        print("🔄 Soldタブを先にクリック中...")
+        sold_tab_clicked = False
+        
+        # JavaScriptでSoldタブを探してクリック
+        try:
+            script = """
+            var elements = document.querySelectorAll('span, button, a, div[role="tab"]');
+            for (var i = 0; i < elements.length; i++) {
+                var elem = elements[i];
+                if (elem.textContent.trim() === 'Sold' || 
+                    elem.textContent.trim() === '"Sold"' ||
+                    (elem.getAttribute('aria-label') && elem.getAttribute('aria-label').includes('Sold'))) {
+                    return elem;
+                }
+            }
+            return null;
+            """
+            sold_tab = driver.execute_script(script)
+            
+            if sold_tab:
+                driver.execute_script("arguments[0].click();", sold_tab)
+                print("✅ Soldタブをクリックしました")
+                sold_tab_clicked = True
+                
+                # Soldタブクリック後の読み込み待機
+                time.sleep(3)
+                
+                # テーブルが再読み込みされるのを待機
+                try:
+                    WebDriverWait(driver, 5).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "tr.research-table-row"))
+                    )
+                    print("✅ Soldタブのデータ読み込み完了")
+                except TimeoutException:
+                    print("⚠️ Soldタブのデータ読み込みタイムアウト")
+            else:
+                print("⚠️ Soldタブが見つかりません")
+                
+        except Exception as e:
+            print(f"❌ Soldタブクリックエラー: {e}")
+        
+        # Soldタブが有効になったことを確認
+        final_url = driver.current_url
+        if "tabName=SOLD" in final_url:
+            print("✅ SOLDタブが有効です（URL確認）")
+        else:
+            print("⚠️ URLにSOLDタブパラメータが見つかりません")
+        
+        # 少し待機してから価格フィルターを適用
+        time.sleep(2)
+        
+        # Price filterボタンを探してクリック
+        print("🔍 Price filterボタンを探しています...")
+        try:
+            # JavaScript経由でPrice filterボタンを探す
+            script = """
+            var buttons = document.querySelectorAll('button');
+            for (var i = 0; i < buttons.length; i++) {
+                var button = buttons[i];
+                var text = button.textContent || button.innerText;
+                if (text && text.includes('Price filter')) {
+                    return button;
+                }
+            }
+            return null;
+            """
+            price_filter_button = driver.execute_script(script)
+            
+            if not price_filter_button:
+                raise Exception("Price filterボタンが見つかりません")
+            
+            # ボタンを表示してクリック
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", price_filter_button)
+            time.sleep(0.5)
+            driver.execute_script("arguments[0].click();", price_filter_button)
+            print("✅ Price filterボタンをクリック")
+            time.sleep(1)
+        except Exception as e:
+            print(f"❌ Price filterボタンクリックエラー: {e}")
+            return False
+        
+        # 最小価格入力欄を探して入力（新しいIDセレクターを追加）
+        min_price_selectors = [
+            "#s0-1-0-0-22-2-10-13-3-16-2-0-0-1-6-2-23-0-0-10-24-1-5-0-3-textbox",  # 提供されたID
+            "input[aria-label='min price filter']",  # aria-labelから特定
+            "input[placeholder='$']",  # placeholderから特定
+            "input[placeholder*='Min']",
+            "input[aria-label*='minimum']",
+            "input[name*='min']"
+        ]
+        
+        min_price_input = None
+        for selector in min_price_selectors:
+            try:
+                min_price_input = WebDriverWait(driver, 3).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                )
+                print(f"✅ 最小価格入力欄発見: {selector}")
+                break
+            except TimeoutException:
+                continue
+        
+        if min_price_input:
+            try:
+                # JavaScriptで直接値を設定する方法も試す
+                driver.execute_script("arguments[0].value = '';", min_price_input)
+                driver.execute_script(f"arguments[0].value = '{min_price}';", min_price_input)
+                driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", min_price_input)
+                driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", min_price_input)
+                print(f"✅ 最小価格入力: ${min_price}")
+                time.sleep(0.3)  # 1秒から0.3秒に短縮
+            except Exception as e:
+                print(f"❌ 最小価格入力エラー: {e}")
+        
+        # 最大価格入力欄を探して入力（新しいIDセレクターを追加）
+        max_price_selectors = [
+            "#s0-1-0-0-22-2-10-13-3-16-2-0-0-1-6-2-23-0-0-10-24-1-5-0-5-textbox",  # 提供されたID
+            "input[aria-label='max price filter']",  # aria-labelから特定
+            "input[placeholder='$$']",  # placeholderから特定（2つの$）
+            "input[placeholder*='Max']",
+            "input[aria-label*='maximum']",
+            "input[name*='max']"
+        ]
+        
+        max_price_input = None
+        for selector in max_price_selectors:
+            try:
+                max_price_input = WebDriverWait(driver, 3).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                )
+                print(f"✅ 最大価格入力欄発見: {selector}")
+                break
+            except TimeoutException:
+                continue
+        
+        if max_price_input:
+            try:
+                # JavaScriptで直接値を設定する方法も試す
+                driver.execute_script("arguments[0].value = '';", max_price_input)
+                driver.execute_script(f"arguments[0].value = '{max_price}';", max_price_input)
+                driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", max_price_input)
+                driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", max_price_input)
+                print(f"✅ 最大価格入力: ${max_price}")
+                time.sleep(0.3)  # 1秒から0.3秒に短縮
+            except Exception as e:
+                print(f"❌ 最大価格入力エラー: {e}")
+        
+        # 入力完了後、少し待機してApplyボタンが有効になるのを待つ
+        time.sleep(2)  # 1秒から2秒に延長
+        print("🔍 Applyボタンを探しています...")
+        
+        # まず全てのボタンをデバッグ表示
+        try:
+            debug_script = """
+            var buttons = document.querySelectorAll('button');
+            var buttonInfo = [];
+            for (var i = 0; i < buttons.length; i++) {
+                var btn = buttons[i];
+                buttonInfo.push({
+                    text: btn.textContent.trim(),
+                    className: btn.className,
+                    enabled: !btn.disabled,
+                    visible: btn.offsetParent !== null
+                });
+            }
+            return buttonInfo;
+            """
+            all_buttons = driver.execute_script(debug_script)
+            print(f"🔍 ページ上の全ボタン数: {len(all_buttons)}")
+            
+            # Applyテキストを含むボタンを探す
+            apply_buttons = [btn for btn in all_buttons if 'apply' in btn['text'].lower()]
+            print(f"🔍 'Apply'テキストを含むボタン: {len(apply_buttons)}")
+            for btn in apply_buttons:
+                print(f"  📋 ボタン: '{btn['text']}' - 有効: {btn['enabled']}, 表示: {btn['visible']}")
+        except Exception as e:
+            print(f"⚠️ ボタンデバッグエラー: {e}")
+        
+        # Applyボタンを探してクリック（より包括的な検索）
+        apply_button_clicked = False
+        
+        # 改善されたApplyボタン検索
+        try:
+            print("🔍 Applyボタンを検索中（改善版）...")
+            
+            # より包括的なJavaScript検索
+            enhanced_script = """
+            // 全てのボタンとdivを検索
+            var allElements = document.querySelectorAll('button, div[role="button"], span[role="button"], a[role="button"]');
+            var candidates = [];
+            
+            for (var i = 0; i < allElements.length; i++) {
+                var elem = allElements[i];
+                var text = elem.textContent || elem.innerText || '';
+                var ariaLabel = elem.getAttribute('aria-label') || '';
+                
+                // 'Apply'テキストを含む要素を探す（大文字小文字区別なし）
+                if (text.toLowerCase().includes('apply') || ariaLabel.toLowerCase().includes('apply')) {
+                    candidates.push({
+                        element: elem,
+                        text: text.trim(),
+                        className: elem.className,
+                        enabled: !elem.disabled,
+                        visible: elem.offsetParent !== null,
+                        tagName: elem.tagName
+                    });
+                }
+            }
+            
+            // 最も適切なApplyボタンを選択
+            var bestCandidate = null;
+            for (var j = 0; j < candidates.length; j++) {
+                var candidate = candidates[j];
+                
+                // 'Apply'のみのテキストを優先
+                if (candidate.text.toLowerCase() === 'apply' && candidate.enabled && candidate.visible) {
+                    bestCandidate = candidate.element;
+                    break;
+                }
+            }
+            
+            // 見つからない場合は、有効で表示されている最初の候補を選択
+            if (!bestCandidate) {
+                for (var k = 0; k < candidates.length; k++) {
+                    if (candidates[k].enabled && candidates[k].visible) {
+                        bestCandidate = candidates[k].element;
+                        break;
+                    }
+                }
+            }
+            
+            return {
+                found: bestCandidate !== null,
+                element: bestCandidate,
+                candidates: candidates.length
+            };
+            """
+            
+            search_result = driver.execute_script(enhanced_script)
+            
+            if search_result['found']:
+                apply_button = search_result['element']
+                print(f"✅ Applyボタン発見（{search_result['candidates']}個の候補から選択）")
+                
+                # ボタンの詳細情報を表示
+                button_info = driver.execute_script("""
+                return {
+                    text: arguments[0].textContent.trim(),
+                    className: arguments[0].className,
+                    enabled: !arguments[0].disabled,
+                    visible: arguments[0].offsetParent !== null,
+                    tagName: arguments[0].tagName
+                };
+                """, apply_button)
+                
+                print(f"📋 選択されたボタン: '{button_info['text']}' ({button_info['tagName']}) - 有効: {button_info['enabled']}, 表示: {button_info['visible']}")
+                
+                # ボタンをスクロールして表示
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center', behavior: 'smooth'});", apply_button)
+                time.sleep(1)
+                
+                # クリック試行
+                click_success = False
+                
+                # 方法1: 通常のクリック
+                try:
+                    apply_button.click()
+                    print("✅ Applyボタンクリック成功（通常クリック）")
+                    click_success = True
+                except Exception as e:
+                    print(f"⚠️ 通常クリック失敗: {e}")
+                
+                # 方法2: JavaScriptクリック
+                if not click_success:
+                    try:
+                        driver.execute_script("arguments[0].click();", apply_button)
+                        print("✅ Applyボタンクリック成功（JavaScriptクリック）")
+                        click_success = True
+                    except Exception as e:
+                        print(f"⚠️ JavaScriptクリック失敗: {e}")
+                
+                # 方法3: フォーカス + Enter
+                if not click_success:
+                    try:
+                        driver.execute_script("arguments[0].focus();", apply_button)
+                        apply_button.send_keys(Keys.RETURN)
+                        print("✅ Applyボタンクリック成功（Enter押下）")
+                        click_success = True
+                    except Exception as e:
+                        print(f"⚠️ Enter押下失敗: {e}")
+                
+                if click_success:
+                    apply_button_clicked = True
+                    print("🎉 Applyボタンのクリックに成功しました！")
+                else:
+                    print("❌ 全てのクリック方法が失敗しました")
+                    
+            else:
+                print(f"❌ Applyボタンが見つかりません（{search_result['candidates']}個の候補を検索）")
+                
+        except Exception as e:
+            print(f"❌ 改善版Applyボタン検索エラー: {e}")
+        
+        if apply_button_clicked:
+            # フィルター適用のため待機時間を延長
+            print("⏳ フィルター適用中...")
+            time.sleep(5)  # 3秒から5秒に延長
+            
+            # フィルター適用確認のため、ページを再読み込み待機
+            try:
+                WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "tr.research-table-row"))
+                )
+                print("✅ フィルター適用後のデータ読み込み完了")
+            except TimeoutException:
+                print("⚠️ フィルター適用後のデータ読み込みタイムアウト")
+        else:
+            print("❌ Applyボタンのクリックに失敗しました")
+        
+        print(f"💰 金額フィルター適用完了: ${min_price} - ${max_price}")
+        
+        # フィルター適用の確認（現在のページURLをチェック）
+        current_url = driver.current_url
+        if "minPrice" in current_url or "maxPrice" in current_url:
+            print("✅ URLにフィルターパラメータが含まれています")
+        else:
+            print("⚠️ URLにフィルターパラメータが見つかりません")
+        
+        # フィルターが適用されたか最終確認（現在の表示内容を確認）
+        try:
+            # フィルター適用後の価格を確認
+            script_check = """
+            var prices = document.querySelectorAll('td.research-table-row__avgSoldPrice, td.research-table-row__soldPrice');
+            var priceValues = [];
+            for (var i = 0; i < prices.length && i < 5; i++) {
+                var text = prices[i].textContent;
+                var match = text.match(/\\$([\\d,]+\\.?\\d*)/);
+                if (match) {
+                    priceValues.push(parseFloat(match[1].replace(',', '')));
+                }
+            }
+            return priceValues;
+            """
+            detected_prices = driver.execute_script(script_check)
+            if detected_prices:
+                print(f"🔍 フィルター適用後の価格サンプル: {[f'${p:.2f}' for p in detected_prices[:3]]}")
+                # 全ての価格がフィルター範囲外の場合は警告
+                out_of_range = [p for p in detected_prices if p < min_price or p > max_price]
+                if out_of_range:
+                    print(f"⚠️ 警告: フィルター範囲外の価格を検出: {[f'${p:.2f}' for p in out_of_range]}")
+                    # 範囲外の価格が多い場合は、フィルターが適用されていない可能性
+                    if len(out_of_range) > len(detected_prices) * 0.5:
+                        print("❌ フィルターが正しく適用されていない可能性があります")
+        except Exception as e:
+            print(f"⚠️ 価格確認エラー: {e}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ 金額フィルター適用エラー: {e}")
         return False
 
 def extract_highest_price_product(driver, model_number, mercari_price, config):
@@ -234,18 +629,29 @@ def extract_highest_price_product(driver, model_number, mercari_price, config):
         minimum_ebay_price = calculate_minimum_ebay_price(mercari_price, config)
         print(f"📈 必要なeBay最低価格: ¥{minimum_ebay_price:,.0f}")
         
-        # デバッグ用HTMLを保存
+        # 価格フィルターの設定を取得
+        price_filter_enabled = config.get('ebay', {}).get('price_filter', {}).get('enable_price_filter', False)
+        min_filter_price = config.get('ebay', {}).get('price_filter', {}).get('min_price', 0)
+        max_filter_price = config.get('ebay', {}).get('price_filter', {}).get('max_price', 999999)
+        
+        # デバッグ用HTMLを取得（保存はしない）
         html_content = driver.page_source
-        debug_filename = f"seller_hub_config_{model_number}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-        with open(debug_filename, 'w', encoding='utf-8') as f:
-            f.write(html_content)
-        print(f"💾 デバッグHTML保存: {debug_filename}")
+        
+        # デバッグ用: 特定の型番の場合はHTMLを保存
+        if model_number in ['SBGX005', 'SARB033', '9940-8000']:
+            debug_filename = f"debug_{model_number}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+            with open(debug_filename, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+            print(f"  📝 デバッグHTML保存: {debug_filename}")
         
         soup = BeautifulSoup(html_content, 'html.parser')
         
         # research-table-row全体を取得してデータを組み合わせ
         table_rows = soup.find_all('tr', class_='research-table-row')
         print(f"📋 テーブル行: {len(table_rows)}件")
+        
+        # 全ての価格を収集してフィルターの動作を確認
+        all_prices = []
         
         profitable_products = []
         exchange_rate = config['exchange_rate']['fixed_rate']
@@ -273,41 +679,109 @@ def extract_highest_price_product(driver, model_number, mercari_price, config):
                     href = 'https://www.ebay.com' + href
                 product['item_url'] = href
             
-            # 価格（売れた価格を取得）
-            price_element = row.find('td', class_='research-table-row__avgSoldPrice')
-            if price_element:
-                price_div = price_element.find('div', class_='research-table-row__item-with-subtitle')
-                if price_div:
-                    price_text = price_div.get_text(strip=True)
+            # 価格（売れた価格を取得）- 複数のセレクターを試す
+            price_found = False
+            
+            # まず個別の販売価格を探す
+            individual_price_selectors = [
+                ('td', 'research-table-row__soldPrice'),
+                ('td', 'research-table-row__price'),
+                ('span', 'item-price'),
+                ('div', 'item-price-sold')
+            ]
+            
+            for tag, class_name in individual_price_selectors:
+                price_element = row.find(tag, class_=class_name)
+                if price_element:
+                    price_text = price_element.get_text(strip=True)
                     # 価格から数値部分を抽出
                     price_match = re.search(r'\$[\d,]+\.?\d*', price_text)
                     if price_match:
                         product['price'] = price_match.group()
-                        # USD to JPY 変換（設定ファイルのレートを使用）
                         usd_price = parse_price(price_match.group())
                         jpy_price = usd_price * exchange_rate
                         product['usd_price'] = usd_price
                         product['price_numeric'] = jpy_price
-                        
-                        # 設定に基づく利益判定
-                        if jpy_price >= minimum_ebay_price:
-                            product['is_profitable'] = True
-                            actual_profit = jpy_price - mercari_price
-                            print(f"  💰 利益商品発見: {product['item_name'][:30]}... - ${usd_price:.2f} (¥{jpy_price:,.0f}) 利益:¥{actual_profit:,.0f}")
+                        price_found = True
+                        print(f"  💵 個別価格発見: ${usd_price:.2f} (セレクター: {tag}.{class_name})")
+                        break
+            
+            # 個別価格が見つからない場合は平均価格を使用
+            if not price_found:
+                price_element = row.find('td', class_='research-table-row__avgSoldPrice')
+                if price_element:
+                    price_div = price_element.find('div', class_='research-table-row__item-with-subtitle')
+                    if price_div:
+                        price_text = price_div.get_text(strip=True)
+                        # 価格から数値部分を抽出
+                        price_match = re.search(r'\$[\d,]+\.?\d*', price_text)
+                        if price_match:
+                            product['price'] = price_match.group()
+                            # USD to JPY 変換（設定ファイルのレートを使用）
+                            usd_price = parse_price(price_match.group())
+                            jpy_price = usd_price * exchange_rate
+                            product['usd_price'] = usd_price
+                            product['price_numeric'] = jpy_price
+                            print(f"  📊 平均価格使用: ${usd_price:.2f}")
+                            price_found = True
+            
+            # 価格が正常に取得できた場合のみ処理を続行
+            if price_found and product['usd_price'] > 0:
+                # 価格を記録
+                all_prices.append(product['usd_price'])
+                
+                # 価格フィルターのチェック（有効な場合）
+                if price_filter_enabled:
+                    if product['usd_price'] < min_filter_price or product['usd_price'] > max_filter_price:
+                        print(f"  ⚠️ フィルター範囲外: ${product['usd_price']:.2f} (フィルター: ${min_filter_price}-${max_filter_price})")
+                        continue  # フィルター範囲外はスキップ
+                
+                # 設定に基づく利益判定
+                if product['price_numeric'] >= minimum_ebay_price:
+                    product['is_profitable'] = True
+                    actual_profit = product['price_numeric'] - mercari_price
+                    print(f"  💰 利益商品発見: {product['item_name'][:30]}... - ${product['usd_price']:.2f} (¥{product['price_numeric']:,.0f}) 利益:¥{actual_profit:,.0f}")
             
             # 利益が出る商品のみ追加
             if product['is_profitable'] and any([product['item_name'], product['item_url'], product['price']]):
                 profitable_products.append(product)
+        
+        # 価格の統計を表示
+        if all_prices:
+            print(f"📊 検出された価格の分布:")
+            print(f"   最小価格: ${min(all_prices):.2f}")
+            print(f"   最大価格: ${max(all_prices):.2f}")
+            print(f"   価格数: {len(all_prices)}件")
+            if price_filter_enabled:
+                in_range = [p for p in all_prices if min_filter_price <= p <= max_filter_price]
+                print(f"   フィルター範囲内: {len(in_range)}件 / {len(all_prices)}件")
         
         # 最高価格の商品を選択
         if profitable_products:
             # USD価格で並び替えて最高価格を取得
             highest_price_product = max(profitable_products, key=lambda x: x['usd_price'])
             
+            # フィルター範囲内の商品のみを表示
+            if price_filter_enabled:
+                filtered_products = [p for p in profitable_products if min_filter_price <= p['usd_price'] <= max_filter_price]
+                print(f"📊 フィルター適用後: {len(filtered_products)}件 / 全{len(profitable_products)}件")
+                
+                if filtered_products:
+                    # フィルター範囲内の最高価格商品を選択
+                    highest_price_product = max(filtered_products, key=lambda x: x['usd_price'])
+                else:
+                    print(f"⚠️ フィルター範囲内（${min_filter_price}-${max_filter_price}）に利益商品がありません")
+                    return None
+            
             print(f"✅ 最高価格商品選択: {len(profitable_products)}件中から選択")
             print(f"  🏆 最高価格: ${highest_price_product['usd_price']:.2f} (¥{highest_price_product['price_numeric']:,.0f})")
             print(f"  📝 商品名: {highest_price_product['item_name'][:50]}...")
             print(f"  💰 実際の利益: ¥{highest_price_product['price_numeric'] - mercari_price:,.0f}")
+            
+            # 最終確認：選択された商品がフィルター範囲内か
+            if price_filter_enabled and (highest_price_product['usd_price'] < min_filter_price or highest_price_product['usd_price'] > max_filter_price):
+                print(f"❌ エラー: 選択された商品がフィルター範囲外です！")
+                return None
             
             return highest_price_product
         else:
@@ -355,6 +829,52 @@ def process_csv_with_config_analysis(csv_file_path):
             # 手動ログインを待機
             wait_for_manual_login(driver)
             
+            # ログイン後、Soldタブが選択されているか確認
+            print("🔄 初回Soldタブ確認中...")
+            try:
+                # 少し待機してからSoldタブを確認
+                time.sleep(2)
+                
+                # JavaScriptでSoldタブがアクティブか確認
+                script = """
+                var tabs = document.querySelectorAll('[role="tab"], .tab-button, span');
+                for (var i = 0; i < tabs.length; i++) {
+                    if (tabs[i].textContent.includes('Sold') && 
+                        (tabs[i].getAttribute('aria-selected') === 'true' || 
+                         tabs[i].classList.contains('active') ||
+                         tabs[i].classList.contains('selected'))) {
+                        return true;
+                    }
+                }
+                return false;
+                """
+                sold_tab_active = driver.execute_script(script)
+                
+                if not sold_tab_active:
+                    # Soldタブがアクティブでない場合はクリック
+                    script_click = """
+                    var elements = document.querySelectorAll('span, button, a, div[role="tab"]');
+                    for (var i = 0; i < elements.length; i++) {
+                        var elem = elements[i];
+                        if (elem.textContent.trim() === 'Sold' || 
+                            elem.textContent.trim() === '"Sold"') {
+                            elem.click();
+                            return true;
+                        }
+                    }
+                    return false;
+                    """
+                    if driver.execute_script(script_click):
+                        print("✅ 初回Soldタブをクリックしました")
+                        time.sleep(2)
+                    else:
+                        print("⚠️ 初回Soldタブのクリックに失敗しました")
+                else:
+                    print("✅ Soldタブは既にアクティブです")
+                    
+            except Exception as e:
+                print(f"⚠️ 初回Soldタブ確認エラー: {e}")
+            
             # 各行を処理
             for index, row in df.iterrows():
                 try:
@@ -395,6 +915,9 @@ def process_csv_with_config_analysis(csv_file_path):
                     
                     # 型番を検索
                     if search_model_number(driver, model_number):
+                        # 金額フィルターを適用（設定で有効な場合）
+                        apply_price_filter_if_enabled(driver, config)
+                        
                         # 設定に基づく最高価格の利益商品を抽出
                         highest_product = extract_highest_price_product(driver, model_number, mercari_price, config)
                         
@@ -418,8 +941,8 @@ def process_csv_with_config_analysis(csv_file_path):
                     else:
                         print(f"❌ 検索失敗: {model_number}")
                     
-                    # 次の検索まで少し待機
-                    time.sleep(2)
+                    # 次の検索まで少し待機（連続検索によるブロックを避ける）
+                    time.sleep(1)  # 2秒から1秒に短縮
                     
                 except Exception as e:
                     print(f"❌ 行処理エラー {index+1}: {e}")
