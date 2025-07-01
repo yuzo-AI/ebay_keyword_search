@@ -52,6 +52,36 @@ class WatchModelExtractor:
                 'SBGP系 (プレミア)': r'\bSBGP\d{3}\b',
                 'SBGH系 (ヘリテージ)': r'\bSBGH\d{3}\b'
             },
+            'OMEGA': {
+                # 長い型番（現代モデル - シーマスター、スピードマスターなど）
+                'シーマスター長型番': r'\b\d{3}\.\d{2}\.\d{2}\.\d{2}\.\d{2}\.\d{3}\b',
+                
+                # 標準型番（4桁.2桁）
+                'コンステレーション系': r'\b\d{4}\.\d{2}\.\d{2}\b',
+                'スピードマスター系': r'\b\d{4}\.\d{2}\b',
+                'シーマスター系': r'\b\d{4}\.\d{2}\b',
+                
+                # ヴィンテージ型番（3桁.3桁）
+                'ヴィンテージ系': r'\b\d{3}\.\d{3}\b',
+                
+                # De Ville系 4桁型番
+                'デビル系': r'\b\d{4}\b(?=.*(?:De\s*Ville|デビル|OMEGA|オメガ))',
+                
+                # キャリバー番号
+                'キャリバー系': r'(?:Cal\.?\s*|キャリバー\s*)(\d{3,4})\b',
+                
+                # シーマスター特別型番
+                'シーマスター番号': r'\b\d{3}\b(?=.*(?:シーマスター|Seamaster))',
+                
+                # スピードマスター特殊型番（SO33M100など）
+                'スウォッチコラボ': r'\bSO33M\d{3}\b',
+                
+                # レディマティック型番
+                'レディマティック系': r'\b\d{3}\.\d{3}\b(?=.*(?:レディマティック|Lady\s*Matic))',
+                
+                # その他現代型番
+                '現代型番': r'\b\d{3,4}\.\d{2,3}\b(?=.*(?:OMEGA|オメガ))'
+            },
             'CASIO': {
                 # G-SHOCK系
                 'DW系 (G-SHOCK)': r'\bDW-\d{4}[A-Z]*-?\d*[A-Z]*\b',
@@ -143,13 +173,15 @@ class WatchModelExtractor:
             bvlgari_keywords = ['BVLGARI', 'ブルガリ', 'BULGARI']
             seiko_keywords = ['GRAND SEIKO', 'グランドセイコー', 'SBGX', 'SBGA', 'SBGR']
             casio_keywords = ['CASIO', 'カシオ', 'G-SHOCK', 'BABY-G', 'EDIFICE']
+            omega_keywords = ['OMEGA', 'オメガ', 'SEAMASTER', 'SPEEDMASTER', 'CONSTELLATION', 'DE VILLE']
             
             bvlgari_count = sum(1 for keyword in bvlgari_keywords if keyword in sample_text)
             seiko_count = sum(1 for keyword in seiko_keywords if keyword in sample_text)
             casio_count = sum(1 for keyword in casio_keywords if keyword in sample_text)
+            omega_count = sum(1 for keyword in omega_keywords if keyword in sample_text)
             
             # 最も多く検出されたブランドを返す
-            counts = {'BVLGARI': bvlgari_count, 'GRAND_SEIKO': seiko_count, 'CASIO': casio_count}
+            counts = {'BVLGARI': bvlgari_count, 'GRAND_SEIKO': seiko_count, 'CASIO': casio_count, 'OMEGA': omega_count}
             max_brand = max(counts, key=counts.get)
             
             if counts[max_brand] > 0:
@@ -169,7 +201,7 @@ class WatchModelExtractor:
         if target_brands is None:
             detected_brand = self.detect_brand(csv_file)
             if detected_brand == 'ALL':
-                target_brands = ['BVLGARI', 'GRAND_SEIKO', 'CASIO']
+                target_brands = ['BVLGARI', 'GRAND_SEIKO', 'CASIO', 'OMEGA']
             else:
                 target_brands = [detected_brand]
         
@@ -317,7 +349,7 @@ def main():
     """
     parser = argparse.ArgumentParser(description='汎用時計識別番号抽出ツール')
     parser.add_argument('csv_file', help='入力CSVファイル')
-    parser.add_argument('--brands', nargs='+', choices=['BVLGARI', 'GRAND_SEIKO', 'CASIO'], 
+    parser.add_argument('--brands', nargs='+', choices=['BVLGARI', 'GRAND_SEIKO', 'CASIO', 'OMEGA'], 
                        help='対象ブランド (指定しない場合は自動検出)')
     parser.add_argument('--output-prefix', help='出力ファイルのプレフィックス')
     
@@ -371,6 +403,6 @@ if __name__ == "__main__":
                 print(f"[エラー] エラーが発生しました: {e}")
         else:
             print(f"[エラー] デフォルトファイル '{default_file}' が見つかりません。")
-            print("使用方法: python extract_watch_model_numbers_universal.py <CSVファイル> [--brands BVLGARI GRAND_SEIKO CASIO]")
+            print("使用方法: python extract_watch_model_numbers_universal.py <CSVファイル> [--brands BVLGARI GRAND_SEIKO CASIO OMEGA]")
     else:
         main() 

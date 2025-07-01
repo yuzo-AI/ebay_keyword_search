@@ -124,18 +124,46 @@ def extract_model_numbers(text):
     text = re.sub(r'サムネイル$', '', text)
     
     patterns = [
+        # OMEGA専用パターン
+        r'\b\d{3}\.\d{2}\.\d{2}\.\d{2}\.\d{2}\.\d{3}\b',  # OMEGA長型番 (例: 210.30.42.20.03.001)
+        r'\b\d{4}\.\d{2}\.\d{2}\b',                        # OMEGA標準型番 (例: 1504.35.00)
+        r'\b\d{3,4}\.\d{2}\b',                             # OMEGAシンプル型番 (例: 3592.50, 1504.35)
+        r'\b\d{3}\.\d{3}\b',                               # OMEGAヴィンテージ (例: 566.002)
+        r'(?:cal\.?\s*|Cal\.?\s*|CAL\.?\s*)(\d{3,4})\b',  # キャリバー番号 (例: cal.484, Cal.1030)
+        r'\bSO33M\d{3}\b',                                 # スウォッチコラボ (例: SO33M100)
+        
+        # 既存パターン
         r'\b[A-Z]{2,4}[0-9]{3,4}[A-Z]?\b',  # 腕時計型番 (例: SBGX263, SBGA211)
         r'\b[0-9]{4}-[0-9]{4}\b',           # ハイフン付き型番 (例: 5645-7010)
         r'\b[A-Z]{1,2}[0-9]{3,6}[A-Z]?\b', # 家電型番 (例: KJ55X8500G)
         r'\b[0-9]{3,6}[A-Z]{2,4}\b',       # 数字+文字型番
+        
+        # OMEGA用追加パターン（数字のみ）
+        r'\b\d{4}\b(?=.*(?:OMEGA|オメガ|De\s*Ville|デビル))',  # De Ville系4桁 (例: 1377, 1458)
+        r'\b03-\d{8}\b',                                      # 特殊番号 (例: 03-24010802)
     ]
     
     found_models = []
     for pattern in patterns:
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        found_models.extend(matches)
+        # キャリバー番号の場合は特別処理
+        if 'cal' in pattern.lower():
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            # キャリバー番号の場合は数字部分のみを抽出
+            for match in matches:
+                if match:
+                    found_models.append(f"Cal.{match}")
+        else:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            found_models.extend(matches)
     
-    return list(set(found_models))  # 重複を除去
+    # 重複を除去し、結果を返す
+    unique_models = list(set(found_models))
+    
+    # デバッグ用：抽出された型番を表示
+    if unique_models:
+        print(f"  🔍 抽出された型番: {', '.join(unique_models)}")
+    
+    return unique_models
 
 def parse_price(price_text):
     """

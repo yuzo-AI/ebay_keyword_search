@@ -75,6 +75,103 @@ pip install -r requirements.txt
 
 webdriver-managerが自動でChromeDriverを管理するため、手動設定は不要です。
 
+## 🏷️ 対応ブランド
+
+現在、以下のブランドの型番抽出に対応しています：
+
+### ✅ 対応済みブランド
+
+1. **BVLGARI（ブルガリ）**
+   - BB系（ブルガリブルガリ）: BB23SS, BB33SS など
+   - ST系（ソロテンポ）: ST29S, ST30S など
+   - BZ系（ビーゼロワン）: BZ22S, BZ30S など
+   - その他10系統に対応
+
+2. **GRAND SEIKO（グランドセイコー）**
+   - SBGX系（クオーツ）: SBGX263, SBGX341 など
+   - SBGA系（スプリングドライブ）: SBGA211, SBGA415 など
+   - SBGR系（メカニカル）: SBGR317, SBGR261 など
+   - その他12系統に対応
+
+3. **CASIO（カシオ）**
+   - G-SHOCK系: DW-5600, GA-2100 など
+   - Baby-G系: BA-110, BGA-280 など
+   - EDIFICE系: EQB-1000, ECB-900 など
+   - その他50以上のパターンに対応
+
+4. **OMEGA（オメガ）**
+   - シーマスター系: 210.30.42.20.03.001 など
+   - スピードマスター系: 3592.50, 3523.80 など
+   - コンステレーション系: 1504.35.00 など
+   - キャリバー系: Cal.484, Cal.1030 など
+   - その他10系統に対応
+
+## 🆕 新ブランドの追加方法
+
+新しいブランドを追加する場合は、以下の手順で簡単に対応できます：
+
+### 📋 追加手順（3ステップ）
+
+#### 1. データ準備
+```bash
+# メルカリから新ブランドのデータを収集したCSVファイルを用意
+# 例: rolex_mercari.csv
+```
+
+#### 2. AIに依頼（コピペ用プロンプト）
+```
+[ブランド名]の識別番号抽出に対応してください。
+
+添付ファイル: [ブランド名]_mercari.csv
+
+以下の3つのファイルを更新してください：
+1. extract_watch_model_numbers_universal.py - 型番パターン追加
+2. extract_ebay_seller_hub_config.py - 型番抽出パターン追加  
+3. config/config.yaml - 検索キーワード追加
+
+CSVファイルから型番パターンを分析して、自動的に対応できるようにしてください。
+```
+
+#### 3. テスト実行
+```bash
+# 型番抽出テスト
+python extract_watch_model_numbers_universal.py [ブランド名]_mercari.csv
+
+# eBay検索テスト
+python extract_ebay_seller_hub_config.py [ブランド名]_mercari.csv
+```
+
+### 💡 実際の使用例（ROLEXを追加する場合）
+
+```
+ROLEXの識別番号抽出に対応してください。
+
+添付ファイル: rolex_mercari.csv
+
+以下の3つのファイルを更新してください：
+1. extract_watch_model_numbers_universal.py - 型番パターン追加
+2. extract_ebay_seller_hub_config.py - 型番抽出パターン追加  
+3. config/config.yaml - 検索キーワード追加
+
+CSVファイルから型番パターンを分析して、自動的に対応できるようにしてください。
+```
+
+### 🔧 自動化される作業
+
+AIが以下の作業を自動で行います：
+
+1. **型番パターン分析** - CSVから実際の型番を抽出・分析
+2. **正規表現パターン作成** - ブランド特有の型番形式を認識
+3. **ファイル更新** - 3つのファイルに必要な変更を追加
+4. **互換性維持** - 既存ブランドとの互換性を保証
+
+### ✅ チェックリスト
+
+- [ ] メルカリCSVファイルがある
+- [ ] 商品タイトルに型番が含まれている
+- [ ] 上記プロンプトをコピペして実行
+- [ ] テストコマンドで動作確認
+
 ## 🚀 使用方法
 
 ### 🔧 設定対応版（推奨）
@@ -117,7 +214,7 @@ python extract_ebay_seller_hub_config.py
 3. **スクリプト実行**
    ```bash
    python extract_ebay_seller_hub_config.py
-   # CSVファイルパスを入力: grand seiko_mercari.csv
+   # CSVファイルパスを入力: omega_mercari.csv
 ```
 
 4. **手動ログイン**
@@ -125,125 +222,6 @@ python extract_ebay_seller_hub_config.py
    - eBayアカウントでログイン
    - Product Research画面まで進む
    - Enterキーで処理開始
-
-### 📊 実行結果例（改善版）
-
-```
-📋 設定ファイル読み込み: config/config.yaml
-💰 利益率設定: 20.0%
-💰 固定利益: ¥3,000
-💱 為替レート: 1USD = ¥150
-💰 金額フィルター: $50 - $800 (有効)
-
-🔄 処理中: 1/4
-📝 商品名: Grand Seiko SBGX263
-💰 メルカリ価格: ¥80,000
-📈 必要eBay価格: ¥99,000 (利益率20.0% + 固定¥3,000)
-🎯 抽出された型番: SBGX263
-
-🔄 Soldタブを先にクリック中...
-✅ Soldタブをクリックしました
-✅ SOLDタブが有効です（URL確認）
-
-💰 金額フィルターを適用中: $50 - $800
-✅ Price filterボタンをクリック
-✅ 最小価格入力: $50
-✅ 最大価格入力: $800
-
-🔍 Applyボタンを探しています...
-🔍 ページ上の全ボタン数: 25
-🔍 'Apply'テキストを含むボタン: 1
-  📋 ボタン: 'Apply' - 有効: true, 表示: true
-✅ Applyボタン発見（1個の候補から選択）
-📋 選択されたボタン: 'Apply' (BUTTON) - 有効: true, 表示: true
-✅ Applyボタンクリック成功（通常クリック）
-🎉 Applyボタンのクリックに成功しました！
-
-⏳ フィルター適用中...
-✅ フィルター適用後のデータ読み込み完了
-🔍 フィルター適用後の価格サンプル: ['$798.00', '$645.50', '$599.99']
-
-✅ 設定条件クリア商品データ取得成功: SEIKO Grand Seiko SBGX263...
-   価格: $798.00 (利益: ¥39,700)
-
-📊 設定ベース利益商品統計:
-   📋 設定内容:
-      利益率: 20.0%
-      固定利益: ¥3,000
-      為替レート: 1USD = ¥150
-   📊 結果:
-      総商品数: 4件
-      利益商品: 3件
-      利益率: 75.0%
-      総利益金額: ¥67,697
-      平均利益: ¥22,566
-```
-
-### 🔄 従来版スクリプト
-
-#### 並列処理版
-```bash
-python extract_ebay_seller_hub_parallel.py
-```
-
-#### シンプル版
-```bash
-python extract_ebay_data_simple.py
-```
-
-## 📁 CSVファイル形式
-
-入力CSVファイルは以下の形式である必要があります：
-
-| A列（必須） | B列（オプション） | C列（必須） | D列（必須） |
-|-------------|-------------------|-------------|-------------|
-| 商品名      | 画像URL           | 価格        | 商品URL     |
-
-**例:**
-```csv
-商品名,画像URL,価格,商品URL
-Grand Seiko SBGX263,https://example.com/image.jpg,80000,https://jp.mercari.com/item/xxx
-Sony WH-1000XM4 ワイヤレスヘッドホン,https://example.com/image2.jpg,25000,https://jp.mercari.com/item/yyy
-```
-
-## 📊 出力ファイル
-
-### 🎯 設定対応版の出力
-
-`ebay_config_results_YYYYMMDD_HHMMSS.csv`
-
-| 列 | 内容 | 例 |
-|----|------|-----|
-| A-D | 元のCSVデータ | 商品名、画像URL、価格、商品URL |
-| E | eBay商品名 | SEIKO Grand Seiko SBGX263... |
-| F | eBayURL | https://www.ebay.com/itm/xxx |
-| G | eBay価格(USD) | $798.00 |
-| H | eBay価格(JPY) | ¥119,700 |
-| I | 利益金額 | ¥39,700 |
-| J | 利益判定 | OK |
-
-### 📈 統計レポート
-
-実行後に以下の統計が表示されます：
-
-```
-📊 設定ベース利益商品統計:
-   📋 設定内容:
-      利益率: 20.0%
-      固定利益: ¥3,000
-      為替レート: 1USD = ¥150
-   📊 結果:
-      総商品数: 4件
-      利益商品: 3件
-      利益率: 75.0%
-      総利益金額: ¥67,697
-      平均利益: ¥22,566
-```
-
-### 🐛 デバッグファイル
-
-- `debug_型番_YYYYMMDD_HHMMSS.html`: 検索結果のHTMLダンプ
-- 問題発生時の原因調査に使用
 
 ## ⚙️ 設定のカスタマイズ
 
