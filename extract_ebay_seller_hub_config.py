@@ -977,7 +977,9 @@ def process_csv_with_config_analysis(csv_file_path):
                     continue
             
             # 結果をCSVファイルに保存
-            output_filename = f"ebay_config_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            # 入力ファイル名から拡張子を除いた名前を取得
+            input_base_name = os.path.splitext(os.path.basename(csv_file_path))[0]
+            output_filename = f"{input_base_name}_result_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
             result_df.to_csv(output_filename, index=False, encoding='utf-8')
             print(f"\n💾 結果保存: {output_filename}")
             
